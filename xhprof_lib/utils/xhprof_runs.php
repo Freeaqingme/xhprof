@@ -428,7 +428,7 @@ CREATE TABLE `details` (
 	$sql['cpu'] = isset($xhprof_data['main()']['cpu']) ? $xhprof_data['main()']['cpu'] : '';        
 
 
-		// The value of 2 seems to be light enugh that we're not killing the server, but still gives us lots of breathing room on 
+		// The value of 2 seems to be light enugh that we're not killing the server, but still gives us lots of breathing room on
 		// full production code. 
 		if (!isset($GLOBALS['_xhprof']['serializer']) || strtolower($GLOBALS['_xhprof']['serializer'] == 'php')) {
 			$sql['data'] = $this->db->escape(gzcompress(serialize($xhprof_data), 2));
@@ -464,7 +464,5 @@ CREATE TABLE `details` (
             return -1;
         }
   }
-  
-  
 
 }

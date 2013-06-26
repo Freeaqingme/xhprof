@@ -28,7 +28,7 @@
 #include "php_ini.h"
 #include "ext/standard/info.h"
 #include "php_xhprof.h"
-#include "Zend/zend_extensions.h"
+#include "zend_extensions.h"
 #include <sys/time.h>
 #include <sys/resource.h>
 #include <stdlib.h>
@@ -244,12 +244,21 @@ typedef struct hp_global_t {
 /* XHProf global state */
 static hp_global_t       hp_globals;
 
+#if PHP_VERSION_ID < 50500
 /* Pointer to the original execute function */
 ZEND_DLEXPORT void (*_zend_execute) (zend_op_array *ops TSRMLS_DC);
 
 /* Pointer to the origianl execute_internal function */
 ZEND_DLEXPORT void (*_zend_execute_internal) (zend_execute_data *data,
                            int ret TSRMLS_DC);
+#else
+/* Pointer to the original execute function */
+static void (*_zend_execute_ex) (zend_execute_data *execute_data TSRMLS_DC);
+
+/* Pointer to the origianl execute_internal function */
+static void (*_zend_execute_internal) (zend_execute_data *data,
+                      struct _zend_fcall_info *fci, int ret TSRMLS_DC);
+#endif
 
 /* Pointer to the original compile function */
 static zend_op_array * (*_zend_compile_file) (zend_file_handle *file_handle,
@@ -805,7 +814,6 @@ void hp_clean_profiler_state(TSRMLS_D) {
 size_t hp_get_entry_name(hp_entry_t  *entry,
                          char           *result_buf,
                          size_t          result_len) {
-  size_t    len = 0;
 
   /* Validate result_len */
   if (result_len <= 1) {
@@ -835,7 +843,7 @@ size_t hp_get_entry_name(hp_entry_t  *entry,
 /**
  * Check if this entry should be ignored, first with a conservative Bloomish
  * filter then with an exact check against the function names.
- * 
+ *
  * @author mpal
  */
 int  hp_ignore_entry_work(uint8 hash_code, char *curr_func) {
@@ -923,8 +931,8 @@ size_t hp_get_function_stack(hp_entry_t *entry,
  * a pointer to one-level directory and basefile name
  * (d/foo.php) in the same string.
  */
-static char *hp_get_base_filename(char *filename) {
-  char *ptr;
+static const char *hp_get_base_filename(const char *filename) {
+  const char *ptr;
   int   found = 0;
 
   if (!filename)
@@ -956,9 +964,9 @@ static char *hp_get_base_filename(char *filename) {
  */
 static char *hp_get_function_name(zend_op_array *ops TSRMLS_DC) {
   zend_execute_data *data;
-  char              *func = NULL;
-  const char        *cls  = NULL;
-  char              *ret  = NULL;
+  const char        *func = NULL;
+  const char        *cls = NULL;
+  char              *ret = NULL;
   int                len;
   zend_function     *curr_func;
 
@@ -994,8 +1002,6 @@ static char *hp_get_function_name(zend_op_array *ops TSRMLS_DC) {
       }
     } else {
       long     curr_op;
-      int      desc_len;
-      char    *desc;
       int      add_filename = 0;
 
       /* we are dealing with a special directive/function like
@@ -1037,7 +1043,7 @@ static char *hp_get_function_name(zend_op_array *ops TSRMLS_DC) {
        * you'll see something like "run_init::foo.php" in your reports.
        */
       if (add_filename){
-        char *filename;
+        const char *filename;
         int   len;
         filename = hp_get_base_filename((curr_func->op_array).filename);
         len      = strlen("run_init") + strlen(filename) + 3;
@@ -1692,18 +1698,31 @@ void hp_mode_sampled_endfn_cb(hp_entry_t **entries  TSRMLS_DC) {
  *
  * @author hzhao, kannan
  */
+#if PHP_VERSION_ID < 50500
 ZEND_DLEXPORT void hp_execute (zend_op_array *ops TSRMLS_DC) {
+#else
+ZEND_DLEXPORT void hp_execute_ex (zend_execute_data *execute_data TSRMLS_DC) {
+  zend_op_array *ops = execute_data->op_array;
+#endif
   char          *func = NULL;
   int hp_profile_flag = 1;
 
   func = hp_get_function_name(ops TSRMLS_CC);
   if (!func) {
+#if PHP_VERSION_ID < 50500
     _zend_execute(ops TSRMLS_CC);
+#else
+    _zend_execute_ex(execute_data TSRMLS_CC);
+#endif
     return;
   }
 
   BEGIN_PROFILING(&hp_globals.entries, func, hp_profile_flag);
+#if PHP_VERSION_ID < 50500
   _zend_execute(ops TSRMLS_CC);
+#else
+  _zend_execute_ex(execute_data TSRMLS_CC);
+#endif
   if (hp_globals.entries) {
     END_PROFILING(&hp_globals.entries, hp_profile_flag);
   }
@@ -1712,7 +1731,6 @@ ZEND_DLEXPORT void hp_execute (zend_op_array *ops TSRMLS_DC) {
 
 #undef EX
 #define EX(element) ((execute_data)->element)
-#define EX_T(offset) (*(temp_variable *)((char *) EX(Ts) + offset))
 
 /**
  * Very similar to hp_execute. Proxy for zend_execute_internal().
@@ -1720,8 +1738,18 @@ ZEND_DLEXPORT void hp_execute (zend_op_array *ops TSRMLS_DC) {
  *
  * @author hzhao, kannan
  */
+
+#if PHP_VERSION_ID < 50500
+#define EX_T(offset) (*(temp_variable *)((char *) EX(Ts) + offset))
+
 ZEND_DLEXPORT void hp_execute_internal(zend_execute_data *execute_data,
                                        int ret TSRMLS_DC) {
+#else
+#define EX_T(offset) (*EX_TMP_VAR(execute_data, offset))
+
+ZEND_DLEXPORT void hp_execute_internal(zend_execute_data *execute_data,
+                                       struct _zend_fcall_info *fci, int ret TSRMLS_DC) {
+#endif
   zend_execute_data *current_data;
   char             *func = NULL;
   int    hp_profile_flag = 1;
@@ -1755,7 +1783,11 @@ ZEND_DLEXPORT void hp_execute_internal(zend_execute_data *execute_data,
 #endif
   } else {
     /* call the old override */
+#if PHP_VERSION_ID < 50500
     _zend_execute_internal(execute_data, ret TSRMLS_CC);
+#else
+    _zend_execute_internal(execute_data, fci, ret TSRMLS_CC);
+#endif
   }
 
   if (func) {
@@ -1775,7 +1807,7 @@ ZEND_DLEXPORT void hp_execute_internal(zend_execute_data *execute_data,
 ZEND_DLEXPORT zend_op_array* hp_compile_file(zend_file_handle *file_handle,
                                              int type TSRMLS_DC) {
 
-  char           *filename;
+  const char     *filename;
   char           *func;
   int             len;
   zend_op_array  *ret;
@@ -1795,7 +1827,6 @@ ZEND_DLEXPORT zend_op_array* hp_compile_file(zend_file_handle *file_handle,
   efree(func);
   return ret;
 }
-
 
 /**
  * Proxy for zend_compile_string(). Used to profile PHP eval compilation time.
@@ -1848,8 +1879,13 @@ static void hp_begin(long level, long xhprof_flags TSRMLS_DC) {
     zend_compile_string = hp_compile_string;
 
     /* Replace zend_execute with our proxy */
+#if PHP_VERSION_ID < 50500
     _zend_execute = zend_execute;
     zend_execute  = hp_execute;
+#else
+    _zend_execute_ex = zend_execute_ex;
+    zend_execute_ex  = hp_execute_ex;
+#endif
 
     /* Replace zend_execute_internal with our proxy */
     _zend_execute_internal = zend_execute_internal;
@@ -1912,8 +1948,6 @@ static void hp_end(TSRMLS_D) {
  * hp_begin() and restores the original values.
  */
 static void hp_stop(TSRMLS_D) {
-  zval *ret;
-  char *out_url;
   int   hp_profile_flag = 1;
 
   /* End any unfinished calls */
@@ -1922,7 +1956,11 @@ static void hp_stop(TSRMLS_D) {
   }
 
   /* Remove proxies, restore the originals */
+#if PHP_VERSION_ID < 50500
   zend_execute          = _zend_execute;
+#else
+  zend_execute_ex       = _zend_execute_ex;
+#endif
   zend_execute_internal = _zend_execute_internal;
   zend_compile_file     = _zend_compile_file;
   zend_compile_string   = _zend_compile_string;
@@ -1942,8 +1980,8 @@ static void hp_stop(TSRMLS_D) {
  */
 
 /** Look in the PHP assoc array to find a key and return the zval associated
- *  with it.  
- *  
+ *  with it.
+ *
  *  @author mpal
  **/
 static zval *hp_zval_at_key(char  *key,

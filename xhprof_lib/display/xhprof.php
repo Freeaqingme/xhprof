@@ -42,7 +42,7 @@ include_once XHPROF_LIB_ROOT . '/utils/xhprof_runs.php';
  * Our coding convention disallows relative paths in hrefs.
  * Get the base URL path from the SCRIPT_NAME.
  */
-$base_path = rtrim(dirname($_SERVER['SCRIPT_NAME']), "/");
+$base_path = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/\\');
 
 
 /**
@@ -58,7 +58,7 @@ $base_path = rtrim(dirname($_SERVER['SCRIPT_NAME']), "/");
 function xhprof_include_js_css($ui_dir_url_path = null) {
 
   if (empty($ui_dir_url_path)) {
-    $ui_dir_url_path = rtrim(dirname($_SERVER['SCRIPT_NAME']), "/");
+    $ui_dir_url_path = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/\\');
   }
 
   // style sheets
@@ -695,7 +695,7 @@ function print_td_num($num, $fmt_func, $bold=false, $attributes=null) {
 
   $class = get_print_class($num, $bold);
 
-  if (!empty($fmt_func)) {
+  if (!empty($fmt_func) && is_numeric($num) ) {
     $num = call_user_func($fmt_func, $num);
   }
 
